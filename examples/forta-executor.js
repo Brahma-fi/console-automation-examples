@@ -3,9 +3,9 @@ import ethers from "ethers";
 import { setIntervalAsync } from "set-interval-async";
 
 /// Import ERC20 ABI
-import ERC20_ABI from "./abi/erc20.json";
+import ERC20_ABI from "../abi/erc20.json";
 /// Import Safe ABI
-import SAFE_ABI from "./abi/safe.json";
+import SAFE_ABI from "../abi/safe.json";
 
 /// Chain ID
 const CHAIN_ID = 1;

@@ -3,16 +3,19 @@ import ethers from "ethers";
 import { setIntervalAsync } from "set-interval-async";
 
 /// Import ERC20 ABI
-const ERC20_ABI = "...";
+import ERC20_ABI from "./abi/erc20.json";
 /// Import Safe ABI
-const SAFE_ABI = "...";
+import SAFE_ABI from "./abi/safe.json";
 
-const HEX_BASE = 16;
+/// Chain ID
+const CHAIN_ID = 1;
+/// RPC url
+const RPC_URL = "...";
 
 /// CRV token address on selected chain
-const CRV_TOKEN_ADDRESS = "...";
+const CRV_TOKEN_ADDRESS = "0xD533a949740bb3306d119CC777fa900bA034cd52";
 /// USDC token address on selected chain
-const USDC_TOKEN_ADDRESS = "...";
+const USDC_TOKEN_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 
 /// address of executor
 const EXECUTOR_ADDRESS = "...";
@@ -22,8 +25,6 @@ const EXECUTOR_PLUGIN_ADDRESS = "...";
 const EXECUTOR_PK = "...";
 /// Console API's base url
 const CONSOLE_API_BASE_URL = "...";
-/// RPC url
-const RPC_URL = "...";
 /// Your forta API url
 const FORTA_API_URL = "https://api.forta.network/graphql";
 
@@ -231,14 +232,8 @@ const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
 const main = async () => {
   /// Scan reports & perform liquidations every hour
   setIntervalAsync(async () => {
-    /// Get chain ID from RPC
-    const currentChainIdHex = await new ethers.providers.JsonRpcProvider(
-      RPC_URL
-    ).send("eth_chainId", []);
-    const currentChainId = parseInt(currentChainIdHex, HEX_BASE);
-
-    const accounts = await fetchAllAccounts(currentChainId);
-    await liquidateCRVWhenScamDetected(accounts, currentChainId);
+    const accounts = await fetchAllAccounts(CHAIN_ID);
+    await liquidateCRVWhenScamDetected(accounts, CHAIN_ID);
   }, 1000 * 60 * 60);
 };
 

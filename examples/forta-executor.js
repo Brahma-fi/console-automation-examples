@@ -157,6 +157,7 @@ const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
   /// to convert all CRV -> USDC
   if (!!crvScamReport) {
     const executionRequests = [];
+
     const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
     const crvToken = new ethers.Contract(
       CRV_TOKEN_ADDRESS,
@@ -210,13 +211,14 @@ const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
       executionRequests
     );
 
-    if (!!relayerResponse.error) console.error(relayerResponse.error);
+    if (!!relayerResponse?.data?.error)
+      console.error(relayerResponse.data.error);
     else {
       /// Every 30 seconds, check status, and log if success
       let success = false;
       while (!success) {
         const { data: statusResponse } = await Axios.get(
-          `${CONSOLE_API_BASE_URL}/relayer/tasks/status/${relayerResponse.trackingId}`
+          `${CONSOLE_API_BASE_URL}/relayer/tasks/status/${relayerResponse.data.trackingId}`
         );
         if (statusResponse?.data?.metadata?.response?.isSuccessful) {
           console.log(

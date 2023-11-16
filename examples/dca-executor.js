@@ -109,6 +109,7 @@ export const buildExecutionDigestSignature = async (
 const buyCRV = async (accountAddresses, chainId) => {
   /// Convert desired USDC balance at given interval to CRV
   const executionRequests = [];
+
   const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
   const usdcToken = new ethers.Contract(
     USDC_TOKEN_ADDRESS,
@@ -165,13 +166,14 @@ const buyCRV = async (accountAddresses, chainId) => {
       executionRequests
     );
 
-    if (!!relayerResponse.error) console.error(relayerResponse.error);
+    if (!!relayerResponse?.data?.error)
+      console.error(relayerResponse.data.error);
     else {
       /// Every 30 seconds, check status, and log if success
       let success = false;
       while (!success) {
         const { data: statusResponse } = await Axios.get(
-          `${CONSOLE_API_BASE_URL}/relayer/tasks/status/${relayerResponse.trackingId}`
+          `${CONSOLE_API_BASE_URL}/relayer/tasks/status/${relayerResponse.data.trackingId}`
         );
         if (statusResponse?.data?.metadata?.response?.isSuccessful) {
           console.log(

@@ -29,7 +29,7 @@ const CONSOLE_API_BASE_URL = "...";
 /// Desired DCA Interval in milliseconds
 const DCA_INTERVAL = 1000 * 60 * 60 * 24 * 7; // weekly
 /// Desired amount to DCA (decimals normalized)
-const DCA_AMOUNT = 10;
+const DCA_AMOUNT = 1000e6;
 
 const convertTokenToToken = (inputToken, outputToken, amount) => {
   /// Populate function with logic to generate calldata to swap `inputToken` -> `outputToken` via preferred DEX

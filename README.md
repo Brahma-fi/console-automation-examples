@@ -51,14 +51,6 @@ What will this feature achieve?
     }
     ```
 
-  - GET `/accounts/console/executors/:consoleAddress/:chainId`
-    - Called by user to get a list of all the executors enabled on an account.
-    - response-
-    ```json
-    {
-    "data": ["address",...]
-    }
-    ```
   - POST `**/accounts/relayer/execute**`
     - request -
     ```json

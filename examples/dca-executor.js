@@ -1,5 +1,5 @@
 import Axios from "axios";
-import ethers from "ethers";
+import ethers, { BigNumber } from "ethers";
 import { setIntervalAsync } from "set-interval-async";
 
 /// Import ERC20 ABI
@@ -25,10 +25,11 @@ const EXECUTOR_PLUGIN_ADDRESS = "...";
 const EXECUTOR_PK = "...";
 /// Console API's base url
 const CONSOLE_API_BASE_URL = "...";
-/// Your forta API url
-const FORTA_API_URL = "https://api.forta.network/graphql";
-/// Your forta API Key
-const FORTA_API_KEY = "...";
+
+/// Desired DCA Interval in milliseconds
+const DCA_INTERVAL = 1000 * 60 * 60 * 24 * 7; // weekly
+/// Desired amount to DCA (decimals normalized)
+const DCA_AMOUNT = 10;
 
 const convertTokenToToken = (inputToken, outputToken, amount) => {
   /// Populate function with logic to generate calldata to swap `inputToken` -> `outputToken` via preferred DEX
@@ -105,74 +106,28 @@ export const buildExecutionDigestSignature = async (
   return signature;
 };
 
-const queryCRVScamReport = async (chainId) => {
-  /// Query Forta's scam detector bot to detect any potential scams
-  const query = `
-        query Labels($input: LabelsInput) {
-            labels(input: $input) {
-            labels {
-                label {
-                entity
-                confidence
-                }
-            }
-            }
-        }
-    `;
-
-  const variables = {
-    input: {
-      sourceIds: [
-        /// Forta scam detector feed source ID
-        "0x1d646c4045189991fdfd24a66b192a294158b839a6ec121d740474bdacb3ab23"
-      ],
-      labels: ["scammer"],
-      state: true,
-      metadata: {
-        chain_id: chainId
-      }
-    }
-  };
-
-  /// Query scam reports from forta API
-  const { data: response } = await Axios.post(
-    FORTA_API_URL,
-    { query, variables },
-    { headers: { Authorization: `bearer ${FORTA_API_KEY}` } }
-  );
-  const scamReports = response?.data?.labels?.labels || [];
-
-  /// Find any scam reports involving CRV address, with confidence greater than 60%
-  const crvScamReport = scamReports.find(
-    (report) => report?.entity === CRV_TOKEN_ADDRESS && report?.confidence > 0.6
+const buyCRV = async (accountAddresses, chainId) => {
+  /// Convert desired USDC balance at given interval to CRV
+  const executionRequests = [];
+  const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+  const usdcToken = new ethers.Contract(
+    USDC_TOKEN_ADDRESS,
+    ERC20_ABI,
+    provider
   );
 
-  return crvScamReport;
-};
+  for (const account of accountAddresses) {
+    /// Get safe contract implementation
+    const safeContract = new ethers.Contract(account, SAFE_ABI, provider);
+    /// Get calldata to convert the user's USDC balance to CRV
+    const accountUSDCBalance = await usdcToken.balanceOf(account);
 
-const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
-  const crvScamReport = await queryCRVScamReport(chainId);
-
-  /// If valid CRV scam report found, send execution requests
-  /// to convert all CRV -> USDC
-  if (!!crvScamReport) {
-    const executionRequests = [];
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-    const crvToken = new ethers.Contract(
-      CRV_TOKEN_ADDRESS,
-      ERC20_ABI,
-      provider
-    );
-
-    for (const account of accountAddresses) {
-      /// Get safe contract implementation
-      const safeContract = new ethers.Contract(account, SAFE_ABI, provider);
-      /// Get calldata to convert the user's CRV balance to USDC
-      const accountCRVBalance = (await crvToken.balanceOf(account)).toString();
+    /// If account has sufficient balance, then DCA buy
+    if (accountUSDCBalance.gte(BigNumber.from(DCA_AMOUNT))) {
       const conversionCallData = convertTokenToToken(
-        CRV_TOKEN_ADDRESS,
         USDC_TOKEN_ADDRESS,
-        accountCRVBalance
+        CRV_TOKEN_ADDRESS,
+        accountUSDCBalance.toString()
       );
 
       const executable = {
@@ -233,11 +188,11 @@ const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
 };
 
 const main = async () => {
-  /// Scan reports & perform liquidations every hour
+  /// Buy CRV at every `DCA_INTERVAL` for every account where executor is enabled
   setIntervalAsync(async () => {
     const accounts = await fetchAllAccounts(CHAIN_ID);
-    await liquidateCRVWhenScamDetected(accounts, CHAIN_ID);
-  }, 1000 * 60 * 60);
+    await buyCRV(accounts, CHAIN_ID);
+  }, DCA_INTERVAL);
 };
 
 /// RUN

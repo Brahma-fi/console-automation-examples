@@ -27,6 +27,8 @@ const EXECUTOR_PK = "...";
 const CONSOLE_API_BASE_URL = "...";
 /// Your forta API url
 const FORTA_API_URL = "https://api.forta.network/graphql";
+/// Your forta API Key
+const FORTA_API_KEY = "...";
 
 const convertTokenToToken = (inputToken, outputToken, amount) => {
   /// Populate function with logic to generate calldata to swap `inputToken` -> `outputToken` via preferred DEX
@@ -132,11 +134,11 @@ const queryCRVScamReport = async (chainId) => {
     }
   };
 
-  /// Replace with your Forta API Key
+  /// Query scam reports from forta API
   const { data: response } = await Axios.post(
     FORTA_API_URL,
     { query, variables },
-    { headers: { Authorization: `bearer ...` } }
+    { headers: { Authorization: `bearer ${FORTA_API_KEY}` } }
   );
   const scamReports = response?.data?.labels?.labels || [];
 

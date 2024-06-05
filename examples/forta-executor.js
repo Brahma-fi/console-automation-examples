@@ -21,6 +21,16 @@ const USDC_TOKEN_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const EXECUTOR_ADDRESS = "...";
 /// address of ExecutorPlugin contract
 const EXECUTOR_PLUGIN_ADDRESS = "...";
+/// address of ClientAutomationRegistry contract
+const CLIENT_AUTOMATION_REGISTRY_ADDRESS = "...";
+
+/// Your automation registry ID
+let RegistryID;
+/// your console client id
+const CLIENT_ID = "...";
+/// your client console address
+const CLIENT_CONSOLE_ADDRESS = "...";
+
 /// executor's private key
 const EXECUTOR_PK = "...";
 /// Console API's base url
@@ -30,6 +40,17 @@ const FORTA_API_URL = "https://api.forta.network/graphql";
 /// Your forta API Key
 const FORTA_API_KEY = "...";
 
+const EXECUTION_CONFIG = {
+  /// NOTE: in case of multiple input tokens, separate them by commas
+  inputTokens: CRV_TOKEN_ADDRESS,
+  /// NOTE: in case of multiple output tokens, separate them by commas
+  outputTokens: USDC_TOKEN_ADDRESS,
+  /// NOTE: comma separated addresses of venues to hop through during swap
+  swapVenues: "...",
+  /// NOTE: replace with the desired fee in BPS for your automation
+  feeBps: 10
+};
+
 const convertTokenToToken = (inputToken, outputToken, amount) => {
   /// Populate function with logic to generate calldata to swap `inputToken` -> `outputToken` via preferred DEX
   const callData = "...";
@@ -37,15 +58,86 @@ const convertTokenToToken = (inputToken, outputToken, amount) => {
 };
 
 const fetchAllAccounts = async (chainId) => {
-  /// Get list of all accounts where `EXECUTOR_ADDRESS` is an executor
+  /// Get list of all accounts where consoles are registered to `RegistryID`
   const { data: response } = await Axios.get(
-    `${CONSOLE_API_BASE_URL}/accounts/user/executable/${EXECUTOR_ADDRESS}/${chainId}`
+    `${CONSOLE_API_BASE_URL}/v1/automations/jobs/subscribers/${RegistryID}/${chainId}`
   );
 
-  return response.data;
+  return response.data?.data || [];
 };
 
-export const buildExecutionDigestSignature = async (
+const getRegistrationParamsData = (timestamp) => ({
+  timestamp: timestamp,
+  clientId: CLIENT_ID,
+  feeInBPS: EXECUTION_CONFIG.feeBps,
+  safeExecutor: EXECUTOR_ADDRESS,
+  /// NOTE: eoaExecutor must be zero
+  eoaExecutor: ethers.constants.AddressZero,
+  inputTokens: EXECUTION_CONFIG.inputTokens,
+  outputTokens: EXECUTION_CONFIG.outputTokens,
+  swapVenues: EXECUTION_CONFIG.swapVenues,
+  action: "create"
+});
+
+export const buildClientAutomationRegistrationSignature = async (timestamp) => {
+  const types = {
+    ClientAutomationRegistry: [
+      {
+        name: "timestamp",
+        type: "uint256"
+      },
+      {
+        name: "clientId",
+        type: "string"
+      },
+      {
+        name: "feeInBPS",
+        type: "uint256"
+      },
+      {
+        name: "safeExecutor",
+        type: "address"
+      },
+      {
+        name: "eoaExecutor",
+        type: "address"
+      },
+      {
+        name: "inputTokens",
+        type: "string"
+      },
+      {
+        name: "outputTokens",
+        type: "string"
+      },
+      {
+        name: "swapVenues",
+        type: "string"
+      },
+      {
+        name: "action",
+        type: "string"
+      }
+    ]
+  };
+
+  const clientAutomationRegistryDomain = {
+    chainId: CHAIN_ID,
+    verifyingContract: CLIENT_AUTOMATION_REGISTRY_ADDRESS
+  };
+
+  const registrationParamsData = getRegistrationParamsData(timestamp);
+  const signer = new ethers.Signer(EXECUTOR_PK);
+  const signature = await signer._signTypedData(
+    clientAutomationRegistryDomain,
+    types,
+    registrationParamsData
+  );
+
+  return signature;
+};
+
+const buildExecutionDigestSignature = async (
   chainId,
   to,
   value,
@@ -199,42 +291,91 @@ const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
       /// Push requests
       executionRequests.push({
         executable,
-        account,
+        subaccount: account,
         executorSignature,
         executor: EXECUTOR_ADDRESS
       });
     }
 
     /// Send execution requests to be validated by backend and executed via relayer
-    const { data: relayerResponse } = await Axios.post(
-      `${CONSOLE_API_BASE_URL}/accounts/relayer/execute`,
-      executionRequests
-    );
-
-    if (!!relayerResponse?.data?.error)
-      console.error(relayerResponse.data.error);
-    else {
-      /// Every 30 seconds, check status, and log if success
-      let success = false;
-      while (!success) {
-        const { data: statusResponse } = await Axios.get(
-          `${CONSOLE_API_BASE_URL}/relayer/tasks/status/${relayerResponse.data.trackingId}`
-        );
-        if (statusResponse?.data?.metadata?.response?.isSuccessful) {
-          console.log(
-            `[SUCCESS] ${statusResponse.data.metadata.response.transactionHash}`
-          );
-          success = true;
+    for (const executionRequest of executionRequests) {
+      const { data: relayerResponse } = await Axios.post(
+        `${CONSOLE_API_BASE_URL}/v1/automations/tasks/execute/${chainId}`,
+        {
+          task: executionRequest
         }
+      );
 
-        /// Sleep 30 seconds
-        await new Promise((r) => setTimeout(r, 30000));
+      try {
+        {
+          /// Every 30 seconds, check status, and log if executed
+          let executed = false;
+          while (!executed) {
+            const { data: statusResponse } = await Axios.get(
+              `${CONSOLE_API_BASE_URL}/v1/relayer/tasks/status/${relayerResponse.data.taskId}`
+            );
+            if (statusResponse?.data?.metadata?.response?.isSuccessful) {
+              console.log(
+                `[SUCCESS] ${statusResponse.data.metadata.response.transactionHash}`
+              );
+              executed = true;
+            }
+            if (statusResponse?.data?.metadata?.response?.error?.length) {
+              /// handle failure as required
+              console.log(
+                `[FAILED] ${statusResponse.data.metadata.response.error}`
+              );
+              executed = false;
+            }
+            /// Sleep 20 seconds
+            await new Promise((r) => setTimeout(r, 20000));
+          }
+        }
+      } catch (err) {
+        /// handle error as required
+        console.error(
+          `validation error on account; ${executionRequest.subaccount}`,
+          err
+        );
       }
     }
   }
 };
 
+const registerClientAutomation = async (chainId) => {
+  const currentTimestamp = Math.floor(Date.now() / 1000);
+  const signature = await buildClientAutomationRegistrationSignature(
+    currentTimestamp
+  );
+
+  const { data: automationRegistrationResponse } = await Axios.post(
+    `${CONSOLE_API_BASE_URL}/v1/automations/registries/${CLIENT_CONSOLE_ADDRESS}`,
+    {
+      signer: CLIENT_CONSOLE_ADDRESS,
+      signature: signature,
+      data: {
+        domain: {
+          chainId,
+          verifyingContract: CLIENT_CONSOLE_ADDRESS
+        },
+        message: getRegistrationParamsData(timestamp)
+      }
+    }
+  );
+
+  return automationRegistrationResponse?.data?.id || "";
+};
+
 const main = async () => {
+  /// register client automation
+  try {
+    const registryId = await registerClientAutomation(CHAIN_ID);
+    if (registryId === "") console.error("automation registry creation failed");
+    else RegistryID = registryId;
+  } catch (err) {
+    console.error("automation registry creation failed", err);
+  }
+  /// Assuming there are subscribed subaccounts for the automation
   /// Scan reports & perform liquidations every hour
   setIntervalAsync(async () => {
     const accounts = await fetchAllAccounts(CHAIN_ID);

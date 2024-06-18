@@ -8,6 +8,8 @@ However, these delegatees are a multisig, and thus any action needed to be perfo
 
 The Execution API aims at solving this problem by creating another set of users called `executors`, who have the ability to override the multisig by performing safe module executions on the delegated sub-safes, given they abide by the set up policy.
 
+### [API REFERENCE](https://brahmafi.notion.site/3rd-Party-API-Reference-bef32a96b48d40458f8d07c790e7cae3)
+
 ### Goals
 
 What will this feature achieve?
@@ -33,7 +35,3 @@ What will this feature achieve?
 - Direct user interactions -
   - `registerExecutor()` on `ExecutorRegistry`
   - `deRegisterExecutor()` on `ExecutorRegistry`
-
-### Backend
-
-[View on Notion](https://brahmafi.notion.site/3rd-Party-API-Reference-bef32a96b48d40458f8d07c790e7cae3)

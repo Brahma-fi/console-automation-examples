@@ -358,8 +358,7 @@ const registerClientAutomation = async (chainId) => {
       signature: signature,
       data: {
         domain: {
-          chainId,
-          verifyingContract: CLIENT_CONSOLE_ADDRESS
+          chainId
         },
         message: getRegistrationParamsData(timestamp)
       }

@@ -36,4 +36,4 @@ What will this feature achieve?
 
 ### Backend
 
-[View on Notion](https://www.notion.so/brahmafi/3rd-Party-APIs-1686d07ffdf3492a93e0a8d10ca7e1d5)
+[View on Notion](https://brahmafi.notion.site/3rd-Party-API-Reference-bef32a96b48d40458f8d07c790e7cae3)

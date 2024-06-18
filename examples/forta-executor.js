@@ -1,11 +1,11 @@
-import Axios from "axios";
-import ethers from "ethers";
-import { setIntervalAsync } from "set-interval-async";
+const Axios = require("axios");
+const { ethers } = require("ethers");
+const { setIntervalAsync } = require("set-interval-async");
 
 /// Import ERC20 ABI
-import ERC20_ABI from "../abi/erc20.json";
-/// Import Safe ABI
-import SAFE_ABI from "../abi/safe.json";
+const ERC20_ABI = require("../abi/erc20.json");
+/// Import ExecutorPlugin ABI
+const EXECUTOR_PLUGIN_ABI = require("../abi/executorPlugin.json");
 
 /// Chain ID
 const CHAIN_ID = 1;
@@ -21,15 +21,12 @@ const USDC_TOKEN_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const EXECUTOR_ADDRESS = "...";
 /// address of ExecutorPlugin contract
 const EXECUTOR_PLUGIN_ADDRESS = "...";
-/// address of ClientAutomationRegistry contract
-const CLIENT_AUTOMATION_REGISTRY_ADDRESS = "...";
 
 /// Your automation registry ID
 let RegistryID;
-/// your console client id
-const CLIENT_ID = "...";
 /// your client console address
 const CLIENT_CONSOLE_ADDRESS = "...";
+const CLIENT_ID = CLIENT_CONSOLE_ADDRESS;
 
 /// executor's private key
 const EXECUTOR_PK = "...";
@@ -60,10 +57,10 @@ const convertTokenToToken = (inputToken, outputToken, amount) => {
 const fetchAllAccounts = async (chainId) => {
   /// Get list of all accounts where consoles are registered to `RegistryID`
   const { data: response } = await Axios.get(
-    `${CONSOLE_API_BASE_URL}/v1/automations/jobs/subscribers/${RegistryID}/${chainId}`
+    `${CONSOLE_API_BASE_URL}/v1/automations/jobs/subscribers/${CLIENT_CONSOLE_ADDRESS}/${EXECUTOR_ADDRESS}/${chainId}`
   );
 
-  return response.data?.data || [];
+  return response?.data || [];
 };
 
 const getRegistrationParamsData = (timestamp) => ({
@@ -122,12 +119,11 @@ export const buildClientAutomationRegistrationSignature = async (timestamp) => {
   };
 
   const clientAutomationRegistryDomain = {
-    chainId: CHAIN_ID,
-    verifyingContract: CLIENT_AUTOMATION_REGISTRY_ADDRESS
+    chainId: CHAIN_ID
   };
 
   const registrationParamsData = getRegistrationParamsData(timestamp);
-  const signer = new ethers.Signer(EXECUTOR_PK);
+  const signer = new ethers.Wallet(EXECUTOR_PK);
   const signature = await signer._signTypedData(
     clientAutomationRegistryDomain,
     types,
@@ -179,8 +175,8 @@ const buildExecutionDigestSignature = async (
     account,
     executor: EXECUTOR_ADDRESS,
     nonce,
-    gasToken: "0x0000000000000000000000000000000000000000",
-    refundReceiver: "0x0000000000000000000000000000000000000000",
+    gasToken: ethers.constants.AddressZero,
+    refundReceiver: ethers.constants.AddressZero,
     safeTxGas: 0,
     baseGas: 0,
     gasPrice: 0
@@ -251,15 +247,20 @@ const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
     const executionRequests = [];
 
     const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    /// Get CRV token contract
     const crvToken = new ethers.Contract(
       CRV_TOKEN_ADDRESS,
       ERC20_ABI,
       provider
     );
+    /// Get executor plugin implementation
+    const executorPluginContract = new ethers.Contract(
+      EXECUTOR_PLUGIN_ADDRESS,
+      EXECUTOR_PLUGIN_ABI,
+      provider
+    );
 
     for (const account of accountAddresses) {
-      /// Get safe contract implementation
-      const safeContract = new ethers.Contract(account, SAFE_ABI, provider);
       /// Get calldata to convert the user's CRV balance to USDC
       const accountCRVBalance = (await crvToken.balanceOf(account)).toString();
       const conversionCallData = convertTokenToToken(
@@ -272,7 +273,7 @@ const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
         // CALL
         callType: 0,
         /// Replace with intended contract to perform swap
-        target: "...",
+        to: "...",
         value: 0,
         data: conversionCallData
       };
@@ -280,12 +281,14 @@ const liquidateCRVWhenScamDetected = async (accountAddresses, chainId) => {
       /// Generate signature for execution digest
       const executorSignature = buildExecutionDigestSignature(
         chainId,
-        executable.target,
+        executable.to,
         executable.value,
         executable.data,
         executable.callType,
         account,
-        (await safeContract.nonce()).toString()
+        (
+          await executorPluginContract.executorNonce(account, EXECUTOR_ADDRESS)
+        ).toString()
       );
 
       /// Push requests

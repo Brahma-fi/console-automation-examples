@@ -1,5 +1,7 @@
 import dotenv from "dotenv";
 import { Wallet, providers, BigNumber } from "ethers";
+import chalk from "chalk";
+import winston from "winston";
 dotenv.config();
 
 const EXECUTOR_SIGNING_KEY = process.env.EXECUTOR_SIGNING_KEY || "";
@@ -17,10 +19,38 @@ import { getQuote, getRouteTransactionData } from "./socket/bridging.js";
 const EXECUTOR_ADDRESS = process.env.EXECUTOR_ADDRESS;
 const BASE_CHAIN_ID = 42161;
 
+const logger = winston.createLogger({
+  level: "info",
+  format: winston.format.combine(
+    winston.format.colorize(),
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} ${level}: ${message}`;
+    })
+  ),
+  transports: [new winston.transports.Console()],
+});
+
+const gasStationLogo = `
+██████  ███████ ███████ ██    ██ ███████ ██            ███    ██ ███████ ████████ ██     ██  ██████  ██████  ██   ██ 
+██   ██ ██      ██      ██    ██ ██      ██            ████   ██ ██         ██    ██     ██ ██    ██ ██   ██ ██  ██  
+██████  █████   █████   ██    ██ █████   ██      █████ ██ ██  ██ █████      ██    ██  █  ██ ██    ██ ██████  █████   
+██   ██ ██      ██      ██    ██ ██      ██            ██  ██ ██ ██         ██    ██ ███ ██ ██    ██ ██   ██ ██  ██  
+██   ██ ███████ ██       ██████  ███████ ███████       ██   ████ ███████    ██     ███ ███   ██████  ██   ██ ██   ██ 
+                                                                                                                     
+                                                                                                                                                                                                                    
+`;
+
+logger.info(chalk.magenta(gasStationLogo));
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 const second = 1000;
+
+const logMessage = (action, details) => {
+  return `${chalk.cyan(action)} - ${chalk.yellow(details)}`;
+};
 
 const canExecute = async (targetChainID, target, threshold) => {
   const provider = new providers.JsonRpcProvider(
@@ -28,11 +58,11 @@ const canExecute = async (targetChainID, target, threshold) => {
   );
 
   const bal = await provider.getBalance(target);
-  console.log(
-    "canExecute current: ",
-    bal.toString(),
-    "threshold: ",
-    threshold.toString()
+  logger.info(
+    logMessage(
+      "CanExecute Check",
+      `Current balance: ${bal.toString()}, Threshold: ${threshold.toString()}`
+    )
   );
 
   if (bal.gt(threshold)) {
@@ -48,26 +78,36 @@ const main = async () => {
       EXECUTOR_ADDRESS,
       BASE_CHAIN_ID
     );
-    console.log("FETCHED EXECUTOR METADATA: ", metadata);
+    logger.info(
+      logMessage("Fetched Executor Metadata", JSON.stringify(metadata, "", 4))
+    );
 
     const provider = new providers.JsonRpcProvider(
       CHAIN_ID_2_RPC_URL[`${BASE_CHAIN_ID}`]
     );
     const signer = new Wallet(EXECUTOR_SIGNING_KEY, provider);
 
-    let subscriptions = [];
     while (true) {
-      console.log("FETCHING SUBSCRIPTIONS....");
-      subscriptions = await fetchActiveSubscriptions(metadata.id);
-      if (subscriptions.length > 0) {
-        break;
+      process.stdout.write(
+        logMessage(
+          `${new Date().toTimeString()} Fetching Subscriptions`,
+          "..."
+        ) + "\r"
+      );
+      let subscriptions = await fetchActiveSubscriptions(metadata.id);
+      if (subscriptions.length == 0) {
+        process.stdout.write(
+          logMessage(
+            `${new Date().toTimeString()} No Subscriptions Found`,
+            "..."
+          ) + "\r"
+        );
+        await delay(5 * second);
+        continue;
       }
-
-      await delay(5 * second);
-    }
-
-    while (true) {
-      console.log("FOUND SUBSCRIPTIONS", subscriptions);
+      logger.info(
+        logMessage("Found Subscriptions", JSON.stringify(subscriptions,'',4))
+      );
 
       for (let subscription of subscriptions) {
         const metadata = subscription.metadata;
@@ -88,7 +128,7 @@ const main = async () => {
           }
         }
         if (refuel) {
-          console.log("GENERATING BRIDGING QUOTE: ");
+          logger.info(logMessage("Generating Bridging Quote", ""));
           const quote = await getQuote(
             BASE_CHAIN_ID,
             "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -103,10 +143,10 @@ const main = async () => {
           );
 
           const route = quote.result.routes[0];
-          console.log("QUOTE:", route);
+          logger.info(logMessage("Quote", JSON.stringify(route)));
 
           const apiReturnData = await getRouteTransactionData(route);
-          console.log("CALLDATA:", apiReturnData);
+          logger.info(logMessage("Call Data", JSON.stringify(apiReturnData)));
 
           const executable = {
             callType: 0,
@@ -123,7 +163,7 @@ const main = async () => {
             BASE_CHAIN_ID,
             CHAIN_ID_2_RPC_URL[`${BASE_CHAIN_ID}`]
           );
-          console.log("EXECUTOR_SIG: ", executorSignature);
+          logger.info(logMessage("Executor Signature", executorSignature));
 
           const taskExecResponse = await executeTask({
             chainId: BASE_CHAIN_ID,
@@ -133,15 +173,18 @@ const main = async () => {
             executor: EXECUTOR_ADDRESS,
           });
 
-          console.log("EXECUTED TASK: ", taskExecResponse);
-          await delay(70 * second);
+          logger.info(
+            logMessage("Executed Task", JSON.stringify(taskExecResponse, "", 4))
+          );
+          logger.info(logMessage("Waiting for intent finalization"))
+          await delay(60 * second);
         } else {
           await delay(5 * second);
         }
       }
     }
   } catch (err) {
-    console.log(err);
+    logger.error(logMessage("Error", err.toString()));
   }
 };
 

@@ -156,7 +156,10 @@ const executeTask = async ({
     );
     return relayerResponse;
   } catch (err) {
-    console.log("failed to execute task ");
+    console.log(
+      "failed to execute task ",
+      JSON.stringify(err.response.data, "", 4)
+    );
     throw "failed to execute task";
   }
 };

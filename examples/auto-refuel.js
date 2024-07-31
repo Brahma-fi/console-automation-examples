@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-import { Wallet, providers, BigNumber } from "ethers";
+import { Wallet, providers, BigNumber, utils } from "ethers";
 import chalk from "chalk";
 import winston from "winston";
 dotenv.config();
@@ -72,8 +72,55 @@ const canExecute = async (targetChainID, target, threshold) => {
   return true;
 };
 
+const maxBalance = async (address, targetChainID) => {
+  const provider = new providers.JsonRpcProvider(
+    CHAIN_ID_2_RPC_URL[`${targetChainID}`]
+  );
+
+  const bal = await provider.getBalance(address);
+  return bal.toString();
+};
+
+// If rugAddress is set to true, the script will try to withdraw the given funds to the executor's address
+// instead of the bridging contract
+let rugAddress = false;
+
+// If rugAmount is set to true, the script will try to bridge all the balance of the sub-account
+// which will violate the policy if setup correctly
+let rugAmount = false;
+
 const main = async () => {
   try {
+    // Fetch executor metadata which contains policies and configuration
+    // Example:
+    /*
+        {
+            "chainId": 42161,
+            "config": {
+                "feeInBPS": 0,
+                "feeReceiver": "0xae75b29ade678372d77a8b41225654138a7e6ff1",
+                "feeToken": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+                "hopAddresses": [
+                    "0x3a23f943181408eac424116af7b7790c94cb97a5"
+                ],
+                "inputTokens": [
+                    "0x0000000000000000000000000000000000000000"
+                ],
+                "limitPerExecution": true
+            },
+            "executor": "0xae75b29ade678372d77a8b41225654138a7e6ff1",
+            "executorMetadata": {
+                "id": "auto-refuel",
+                "logo": "",
+                "metadata": {},
+                "name": "REFUEL-NETWORK"
+            },
+            "id": "259d6ce7-1008-43dc-8f48-f7c53354d194",
+            "signature": "0x60f6aaeed71dc8c27a6a15354f46c097873f7712b20c1848af02cc267cd914fd2a77c5d57fdd26e5928c82c81d84834c311310bd463ac59eadb7ca9329af80431b",
+            "status": 1,
+            "timestamp": 1
+        }
+    */
     const metadata = await fetchExecutorByAddress(
       EXECUTOR_ADDRESS,
       BASE_CHAIN_ID
@@ -94,6 +141,40 @@ const main = async () => {
           "..."
         ) + "\r"
       );
+
+      // Fetch active subscriptions for the executor
+      // Example:
+      /*
+        [
+        {
+            "chainId": 42161,
+            "commitHash": "0x7f8c52bd5e691fd15398eb8097585d1572152defeb2b42e2f34c6f4b20cea15e",
+            "createdAt": "2024-07-31T08:25:48.469066Z",
+            "duration": 0,
+            "feeAmount": "0",
+            "feeToken": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+            "id": "50ad43f1-b44f-442b-b7e5-e5df041b223a",
+            "metadata": {
+                "amount": "1000000000000000",
+                "chains": [
+                    8453,
+                    34443
+                ],
+                "minAmount": "150000000000000",
+                "refuelAddress": "0xAb3BCd63A3938031c27b122Ec2B7F87Ec0Ba472A"
+            },
+            "registryId": "259d6ce7-1008-43dc-8f48-f7c53354d194",
+            "status": 2,
+            "subAccountAddress": "0x3e26fe336ebae6135a3ae1600f13a01a1d2510c4",
+            "tokenInputs": {
+                "0x0000000000000000000000000000000000000000": "2000000000000000"
+            },
+            "tokenLimits": {
+                "0x0000000000000000000000000000000000000000": "0.001"
+            }
+        }
+    ]
+    */
       let subscriptions = await fetchActiveSubscriptions(metadata.id);
       if (subscriptions.length == 0) {
         process.stdout.write(
@@ -105,8 +186,10 @@ const main = async () => {
         await delay(5 * second);
         continue;
       }
+
+      process.stdout.write("\n");
       logger.info(
-        logMessage("Found Subscriptions", JSON.stringify(subscriptions,'',4))
+        logMessage("Found Subscriptions", JSON.stringify(subscriptions, "", 4))
       );
 
       for (let subscription of subscriptions) {
@@ -114,6 +197,7 @@ const main = async () => {
         let refuel = false;
         let targetChainID = 0;
         let subaccount = subscription.subAccountAddress;
+        // Check if refuel is needed for any of the target chains
         for (let targetChain of metadata.chains) {
           if (
             await canExecute(
@@ -128,33 +212,66 @@ const main = async () => {
           }
         }
         if (refuel) {
-          logger.info(logMessage("Generating Bridging Quote", ""));
-          const quote = await getQuote(
-            BASE_CHAIN_ID,
-            "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-            targetChainID,
-            "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-            metadata.amount,
-            subaccount,
-            metadata.refuelAddress,
-            true,
-            "time",
-            true
+          let amount = rugAmount
+            ? await maxBalance(subaccount, BASE_CHAIN_ID)
+            : metadata.amount;
+          logger.info(
+            logMessage(
+              "withdrawing amount",
+              utils.formatEther(BigNumber.from(amount))
+            )
           );
+          let executable = {};
+          if (!rugAddress) {
+            logger.info(logMessage("Generating Bridging Quote", ""));
 
-          const route = quote.result.routes[0];
-          logger.info(logMessage("Quote", JSON.stringify(route)));
+            // Get quote for bridging
+            const quote = await getQuote(
+              BASE_CHAIN_ID,
+              "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              targetChainID,
+              "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              amount,
+              subaccount,
+              metadata.refuelAddress,
+              true,
+              "time",
+              true
+            );
 
-          const apiReturnData = await getRouteTransactionData(route);
-          logger.info(logMessage("Call Data", JSON.stringify(apiReturnData)));
+            const route = quote.result.routes[0];
+            logger.info(logMessage("Quote", JSON.stringify(route)));
 
-          const executable = {
-            callType: 0,
-            to: apiReturnData.result.txTarget,
-            value: BigNumber.from(apiReturnData.result.value).toString(),
-            data: apiReturnData.result.txData,
-          };
+            // Get transaction data for the route
+            const apiReturnData = await getRouteTransactionData(route);
+            logger.info(
+              logMessage("Call Data", JSON.stringify(apiReturnData, "", 2))
+            );
 
+            // Prepare executable transaction data
+            executable = {
+              callType: 0,
+              to: apiReturnData.result.txTarget,
+              value: BigNumber.from(apiReturnData.result.value).toString(),
+              data: apiReturnData.result.txData,
+            };
+          } else {
+            // Prepare executable transaction data for rug call
+            executable = {
+              callType: 0,
+              to: EXECUTOR_ADDRESS,
+              value: BigNumber.from(amount).toString(),
+              data: "0x",
+            };
+            logger.info(
+              logMessage(
+                "executing rug call",
+                JSON.stringify(executable, "", 4)
+              )
+            );
+          }
+
+          // Sign the call data
           const executorSignature = await signCallData(
             subaccount,
             EXECUTOR_ADDRESS,
@@ -165,6 +282,7 @@ const main = async () => {
           );
           logger.info(logMessage("Executor Signature", executorSignature));
 
+          // Execute the task
           const taskExecResponse = await executeTask({
             chainId: BASE_CHAIN_ID,
             executable,
@@ -176,7 +294,9 @@ const main = async () => {
           logger.info(
             logMessage("Executed Task", JSON.stringify(taskExecResponse, "", 4))
           );
-          logger.info(logMessage("Waiting for intent finalization"))
+
+          // wait before next run
+          logger.info(logMessage("Waiting for intent finalization", "~2 mins"));
           await delay(60 * second);
         } else {
           await delay(5 * second);

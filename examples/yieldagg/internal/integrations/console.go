@@ -2,12 +2,15 @@ package integrations
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
 	"github.com/Brahma-fi/console-automation-examples/internal/entity"
+	"github.com/Brahma-fi/console-automation-examples/utils/logger"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/go-resty/resty/v2"
+	"go.uber.org/zap"
 )
 
 const (
@@ -80,16 +83,20 @@ func (c *ConsoleClient) Subscriptions(ctx context.Context, registryID string) ([
 }
 
 func (c *ConsoleClient) Execute(ctx context.Context, req *entity.ExecuteTaskReq) (*entity.ExecuteTaskResp, error) {
+	log := logger.NewLogger("console-executor")
 	result := &entity.ExecuteTaskResp{}
-	_, err := c.client.R().
+	resp, err := c.client.R().
 		SetContext(ctx).
 		SetBody(req).
-		SetResult(result).
 		Post(fmt.Sprintf("/v1/automations/tasks/execute/%d", req.ChainID))
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get executor subscriptions: %w", err)
 	}
+	if err = json.Unmarshal(resp.Body(), result); err != nil {
+		return nil, err
+	}
 
+	log.Info("executor result", zap.String("resp", string(resp.Body())))
 	return result, nil
 }

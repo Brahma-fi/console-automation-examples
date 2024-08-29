@@ -7,10 +7,12 @@ import (
 	"github.com/Brahma-fi/console-automation-examples/internal/entity"
 	utils "github.com/Brahma-fi/console-automation-examples/utils/abis/executorplugin"
 	"github.com/Brahma-fi/console-automation-examples/utils/executor"
+	"github.com/Brahma-fi/console-automation-examples/utils/logger"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"go.uber.org/zap"
 )
 
 const (
@@ -58,6 +60,7 @@ func NewConsoleExecutor(
 }
 
 func (e *ConsoleExecutor) Execute(ctx context.Context, req *entity.SignAndExecuteRequest) (string, error) {
+	log := logger.NewLogger("console-executor")
 	val, _ := new(big.Int).SetString(req.Value, 10)
 	callData, err := hexutil.Decode(req.Data)
 	if err != nil {
@@ -86,10 +89,13 @@ func (e *ConsoleExecutor) Execute(ctx context.Context, req *entity.SignAndExecut
 		return "", err
 	}
 
+	log.Info("signing digest", zap.String("digest", executableDigest.Hex()))
 	sig, err := e.executor.Sign(ctx, executableDigest.Hex(), e.executor.Address())
 	if err != nil {
 		return "", err
 	}
+
+	log.Info("executor signature", zap.String("sig", hexutil.Encode(sig)))
 
 	resp, err := e.client.Execute(ctx, &entity.ExecuteTaskReq{
 		ChainID: int64(req.ChainID),
@@ -106,7 +112,6 @@ func (e *ConsoleExecutor) Execute(ctx context.Context, req *entity.SignAndExecut
 		},
 		Webhook: "",
 	})
-
 	if err != nil {
 		return "", err
 	}

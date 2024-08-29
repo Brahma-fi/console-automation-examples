@@ -2,9 +2,10 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/Brahma-fi/console-automation-examples/config"
-	"github.com/ethereum/go-ethereum/common"
+	"github.com/Brahma-fi/console-automation-examples/utils/scheduler"
 )
 
 func Run() error {
@@ -26,6 +27,9 @@ func Run() error {
 		return err
 	}
 
-	addr := common.HexToAddress("")
-	return ss.Strategy.Run(ctx, addr, false)
+	if err = ss.Strategy.Strategies(ctx); err != nil {
+		return err
+	}
+
+	return scheduler.Schedule(ctx, time.Second*60, ss.Strategy.Run)
 }

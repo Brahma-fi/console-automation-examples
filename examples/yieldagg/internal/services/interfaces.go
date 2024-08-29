@@ -55,4 +55,5 @@ type morphoClient interface {
 
 type consoleExecutor interface {
 	Execute(ctx context.Context, req *entity.SignAndExecuteRequest) (string, error)
+	Subscriptions(ctx context.Context) ([]entity.ClientSubscription, error)
 }

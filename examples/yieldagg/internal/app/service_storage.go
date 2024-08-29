@@ -25,7 +25,8 @@ func newServiceStorage(ctx context.Context, c *config.Config, is *integrationSto
 		return nil, err
 	}
 
-	ss.Strategy, err = services.NewMorphoBalancingStrategy(is.MorphoClient, ss.ConsoleExecutor, client)
+	// set exit to true if all users positions should be closed
+	ss.Strategy, err = services.NewMorphoBalancingStrategy(is.MorphoClient, ss.ConsoleExecutor, client, false, true)
 	if err != nil {
 		return nil, err
 	}

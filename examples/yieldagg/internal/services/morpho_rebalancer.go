@@ -2,18 +2,23 @@ package services
 
 import (
 	"context"
-	"fmt"
 	"math/big"
+	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/Brahma-fi/console-automation-examples/config"
 	"github.com/Brahma-fi/console-automation-examples/internal/entity"
 	utils "github.com/Brahma-fi/console-automation-examples/utils/abis/erc20"
+	"github.com/Brahma-fi/console-automation-examples/utils/logger"
+	"github.com/Brahma-fi/console-automation-examples/utils/pretty"
+	"github.com/Brahma-fi/console-automation-examples/utils/scheduler"
 	"github.com/Brahma-fi/go-safe/encoders"
 	"github.com/Brahma-fi/go-safe/types"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"go.uber.org/zap"
 )
 
 var (
@@ -30,16 +35,21 @@ var (
 )
 
 type MorphoBalancingStrategy struct {
-	client            morphoClient
-	strategyBaseToken common.Address
-	baseTokenCaller   *utils.Erc20Caller
-	executor          consoleExecutor
+	client                morphoClient
+	strategyBaseToken     common.Address
+	baseTokenCaller       *utils.Erc20Caller
+	executor              consoleExecutor
+	exit                  bool
+	initTime              int64
+	enableRandomSwitching bool
 }
 
 func NewMorphoBalancingStrategy(
 	client morphoClient,
 	executor consoleExecutor,
 	caller bind.ContractCaller,
+	exit bool,
+	enableRandomSwitching bool,
 ) (*MorphoBalancingStrategy, error) {
 
 	tokenClient, err := utils.NewErc20Caller(strategyToken, caller)
@@ -48,21 +58,38 @@ func NewMorphoBalancingStrategy(
 	}
 
 	return &MorphoBalancingStrategy{
-		client: client,
-
-		strategyBaseToken: strategyToken,
-		baseTokenCaller:   tokenClient,
-		executor:          executor,
+		client:                client,
+		exit:                  exit,
+		strategyBaseToken:     strategyToken,
+		baseTokenCaller:       tokenClient,
+		executor:              executor,
+		enableRandomSwitching: enableRandomSwitching,
 	}, nil
 }
 
-func (m *MorphoBalancingStrategy) Run(ctx context.Context, subaccount common.Address, exit bool) error {
+func (m *MorphoBalancingStrategy) Run(ctx context.Context) error {
+	if m.initTime == 0 {
+		m.initTime, _ = ctx.Value(scheduler.ExecutionTimeCtxKey{}).(int64)
+	}
+
+	log := logger.NewLogger("strategy")
+	subscription, err := m.executor.Subscriptions(ctx)
+	if err != nil {
+		return err
+	}
+
+	if len(subscription) == 0 {
+		return nil
+	}
 	vaults, err := m.client.Vaults(ctx, m.strategyBaseToken)
 	if err != nil {
 		return err
 	}
 
-	currentVault, err := m.ActiveVault(ctx, subaccount)
+	log.Info("subscription", zap.Any("0", subscription[0]))
+
+	subaccount := common.HexToAddress(subscription[0].SubAccountAddress)
+	currentVault, err := m.ActiveVault(ctx, log, subaccount)
 	if err != nil {
 		return err
 	}
@@ -75,21 +102,31 @@ func (m *MorphoBalancingStrategy) Run(ctx context.Context, subaccount common.Add
 	hasAvailableBalance := subAccBalance.Cmp(big.NewInt(0)) > 0
 	isAlreadyInVault := currentVault != common.HexToAddress("")
 
-	if exit && isAlreadyInVault {
-		return m.Redeem(ctx, subaccount, currentVault)
+	if m.exit && isAlreadyInVault {
+		return m.Redeem(ctx, log, subaccount, currentVault)
 	}
 
 	bestVault, _ := m.findBestVault(vaults)
+	// randomly switch between pools
+	// not to be actually enabled
+	if m.enableRandomSwitching && time.Now().Unix()-m.initTime > 180 {
+		bestVault, _ = m.findRandomVault(vaults)
+		m.initTime = time.Now().Unix() + 360
+	}
+
 	if bestVault == currentVault {
+		log.Info("no re-balance signal")
 		return nil
 	}
 
 	if !isAlreadyInVault && hasAvailableBalance {
-		return m.Deposit(ctx, subaccount, bestVault)
+		log.Info("entering strategy", zap.String("address", bestVault.String()))
+		return m.Deposit(ctx, log, subaccount, bestVault)
 	}
 
 	if isAlreadyInVault && bestVault != currentVault {
-		return m.RedeemAndDeposit(ctx, subaccount, currentVault, bestVault)
+		log.Info("re-balance strategy", zap.String("from", currentVault.String()), zap.String("to", bestVault.String()))
+		return m.RedeemAndDeposit(ctx, log, subaccount, currentVault, bestVault)
 	}
 
 	return nil
@@ -111,7 +148,17 @@ func (m *MorphoBalancingStrategy) findBestVault(
 	return bestVault, bestApy
 }
 
-func (m *MorphoBalancingStrategy) Deposit(ctx context.Context, user common.Address, vault common.Address) error {
+func (m *MorphoBalancingStrategy) findRandomVault(vaults []entity.VaultInfo) (common.Address, float64) {
+	randVault := rand.Int() % len(vaults)
+	return common.HexToAddress(vaults[randVault].Address), vaults[randVault].State.NetApy
+}
+
+func (m *MorphoBalancingStrategy) Deposit(
+	ctx context.Context,
+	log *zap.Logger,
+	user common.Address,
+	vault common.Address,
+) error {
 	balance, err := m.baseTokenCaller.BalanceOf(&bind.CallOpts{Context: ctx}, user)
 	if err != nil {
 		return err
@@ -161,12 +208,13 @@ func (m *MorphoBalancingStrategy) Deposit(ctx context.Context, user common.Addre
 		Data:       safeTx.Data.String(),
 	})
 
-	fmt.Println(taskID)
+	log.Info("executed strategy signal", zap.String("taskID", taskID))
 	return err
 }
 
 func (m *MorphoBalancingStrategy) Redeem(
 	ctx context.Context,
+	log *zap.Logger,
 	user common.Address,
 	vault common.Address,
 ) error {
@@ -188,7 +236,7 @@ func (m *MorphoBalancingStrategy) Redeem(
 		return err
 	}
 
-	_, err = m.executor.Execute(ctx, &entity.SignAndExecuteRequest{
+	taskID, err := m.executor.Execute(ctx, &entity.SignAndExecuteRequest{
 		Subaccount: user.Hex(),
 		ChainID:    config.BaseChainID,
 		Operation:  safeTx.Operation,
@@ -197,11 +245,14 @@ func (m *MorphoBalancingStrategy) Redeem(
 		Data:       safeTx.Data.String(),
 	})
 
+	log.Info("executed exit strategy signal", zap.String("taskID", taskID))
+	panic("exited")
 	return err
 }
 
 func (m *MorphoBalancingStrategy) RedeemAndDeposit(
 	ctx context.Context,
+	log *zap.Logger,
 	user common.Address,
 	from common.Address,
 	to common.Address,
@@ -258,7 +309,7 @@ func (m *MorphoBalancingStrategy) RedeemAndDeposit(
 		return err
 	}
 
-	_, err = m.executor.Execute(ctx, &entity.SignAndExecuteRequest{
+	taskID, err := m.executor.Execute(ctx, &entity.SignAndExecuteRequest{
 		Subaccount: user.Hex(),
 		ChainID:    config.BaseChainID,
 		Operation:  safeTx.Operation,
@@ -267,10 +318,15 @@ func (m *MorphoBalancingStrategy) RedeemAndDeposit(
 		Data:       safeTx.Data.String(),
 	})
 
+	log.Info("executed strategy signal", zap.String("taskID", taskID))
 	return err
 }
 
-func (m *MorphoBalancingStrategy) ActiveVault(ctx context.Context, user common.Address) (common.Address, error) {
+func (m *MorphoBalancingStrategy) ActiveVault(
+	ctx context.Context,
+	log *zap.Logger,
+	user common.Address,
+) (common.Address, error) {
 	for _, vault := range availableVaults {
 		shares, err := m.client.Shares(ctx, common.HexToAddress(vault), user)
 		if err != nil {
@@ -278,9 +334,20 @@ func (m *MorphoBalancingStrategy) ActiveVault(ctx context.Context, user common.A
 		}
 
 		if shares.Int64() != 0 {
+			log.Info("active strategy", zap.String("address", vault), zap.String("shares", shares.String()))
 			return common.HexToAddress(vault), nil
 		}
 	}
 
 	return common.Address{}, nil
+}
+
+func (m *MorphoBalancingStrategy) Strategies(ctx context.Context) error {
+	vaults, err := m.client.Vaults(ctx, m.strategyBaseToken)
+	if err != nil {
+		return err
+	}
+
+	pretty.RenderVaults(vaults)
+	return nil
 }

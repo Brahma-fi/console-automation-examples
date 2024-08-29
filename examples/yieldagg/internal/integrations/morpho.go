@@ -2,12 +2,11 @@ package integrations
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"strings"
 
 	"github.com/Brahma-fi/console-automation-examples/internal/entity"
-	utils "github.com/Brahma-fi/console-automation-examples/utils/abis/meta_morpho"
+	utils "github.com/Brahma-fi/console-automation-examples/utils/abis/metamorpho"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -57,7 +56,7 @@ func (c *MorphoClient) User(ctx context.Context, address common.Address) ([]enti
 	}
 
 	if len(query.Users.Items) == 0 {
-		return nil, errors.New("no positions found")
+		return make([]entity.UserInfo, 0), nil
 	}
 
 	return query.ToUserInfo(), nil
@@ -76,7 +75,25 @@ func (c *MorphoClient) Shares(
 	return vault.BalanceOf(&bind.CallOpts{Context: ctx}, depositor)
 }
 
-func (c *MorphoClient) WithdrawMax(
+func (c *MorphoClient) PreviewRedeem(
+	ctx context.Context,
+	vaultAddr common.Address,
+	depositor common.Address,
+) (*big.Int, error) {
+	shares, err := c.Shares(ctx, vaultAddr, depositor)
+	if err != nil {
+		return nil, err
+	}
+
+	vault, err := utils.NewMorphoCaller(vaultAddr, c.caller)
+	if err != nil {
+		return nil, err
+	}
+
+	return vault.PreviewRedeem(&bind.CallOpts{Context: ctx}, shares)
+}
+
+func (c *MorphoClient) RedeemMax(
 	ctx context.Context,
 	vaultAddr common.Address,
 	depositor common.Address,

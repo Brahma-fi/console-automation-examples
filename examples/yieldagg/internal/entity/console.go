@@ -76,19 +76,23 @@ type VerifyExecutableResp struct {
 	} `json:"data"`
 }
 
+type Executable struct {
+	CallType uint8  `json:"callType"`
+	To       string `json:"to"`
+	Value    string `json:"value"`
+	Data     string `json:"data"`
+}
+
+type Task struct {
+	Subaccount        string     `json:"subaccount"`
+	Executor          string     `json:"executor"`
+	ExecutorSignature string     `json:"executorSignature"`
+	Executable        Executable `json:"executable"`
+}
+
 type ExecuteTaskReq struct {
-	ChainID int64 `json:"-"`
-	Task    struct {
-		Subaccount        string `json:"subaccount"`
-		Executor          string `json:"executor"`
-		ExecutorSignature string `json:"executorSignature"`
-		Executable        struct {
-			CallType string `json:"callType"`
-			To       string `json:"to"`
-			Value    string `json:"value"`
-			Data     string `json:"data"`
-		} `json:"executable"`
-	} `json:"task"`
+	ChainID int64  `json:"-"`
+	Task    Task   `json:"task"`
 	Webhook string `json:"webhook"`
 }
 

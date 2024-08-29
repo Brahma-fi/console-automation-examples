@@ -3,6 +3,7 @@ package integrations
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/Brahma-fi/console-automation-examples/internal/entity"
 	"github.com/ethereum/go-ethereum/common"
@@ -10,9 +11,7 @@ import (
 )
 
 const (
-	// ExecutorPluginAddress https://basescan.org/address/0xb92929d03768a4F8D69552e15a8071EAf8E684ed
-	ExecutorPluginAddress = "0xb92929d03768a4F8D69552e15a8071EAf8E684ed"
-	CancelledStatus       = 4
+	CancelledStatus = 4
 )
 
 type ConsoleClient struct {
@@ -28,16 +27,20 @@ func NewConsoleClient(base string) *ConsoleClient {
 func (c *ConsoleClient) ExecutorByAddress(
 	ctx context.Context,
 	address common.Address,
-	chainID int64,
+	chainID uint64,
 ) (*entity.ExecutorMetadata, error) {
 	result := &entity.GetExecutorMetadataResp{}
-	_, err := c.client.R().
+	resp, err := c.client.R().
 		SetContext(ctx).
 		SetResult(result).
 		Get(fmt.Sprintf("/v1/automations/executor/%s/%d", address.Hex(), chainID))
-
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, fmt.Errorf("failed to fetch executor by address: %w", err)
+	case resp.StatusCode() == http.StatusNotFound:
+		return nil, fmt.Errorf("executor not found: %s", address.Hex())
+	case resp.StatusCode() != http.StatusOK:
+		return nil, fmt.Errorf("failed to fetch executor: %d", resp.StatusCode())
 	}
 
 	return &result.Data, nil
@@ -82,7 +85,7 @@ func (c *ConsoleClient) Execute(ctx context.Context, req *entity.ExecuteTaskReq)
 		SetContext(ctx).
 		SetBody(req).
 		SetResult(result).
-		Get(fmt.Sprintf("/v1/automations/tasks/execute/%d", req.ChainID))
+		Post(fmt.Sprintf("/v1/automations/tasks/execute/%d", req.ChainID))
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get executor subscriptions: %w", err)
